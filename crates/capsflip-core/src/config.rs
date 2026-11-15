@@ -20,10 +20,13 @@ pub struct Config {
 impl Config {
     /// The file written on first start. It spells out the defaults.
     pub const TEMPLATE: &str = r#"# capsflip configuration. Reload it from the tray menu after editing.
+#
+# Every setting is commented out. Remove the # in front of one to change
+# it; until then capsflip uses its built-in default.
 
 [layout]
 # The English layout that Caps Lock switches to.
-english = "en-US"
+# english = "en-US"
 # The layout to pair with English before any other one was used.
 # Without it, the first non-English layout installed is taken.
 # default_secondary = "uk-UA"
@@ -31,12 +34,11 @@ english = "en-US"
 [caps_lock]
 # How long Caps Lock must be held to toggle capital letters, in milliseconds.
 # Shift+Caps Lock toggles them at once.
-hold_threshold_ms = 1000
+# hold_threshold_ms = 500
 
 [exclusions]
-# Programs in which Caps Lock is left alone, by executable name,
-# for example ["mstsc.exe", "vmware.exe"].
-apps = []
+# Programs in which Caps Lock is left alone, by executable name.
+# apps = ["mstsc.exe", "vmware.exe"]
 "#;
 
     /// Parses and validates the text of a config file.
@@ -165,9 +167,11 @@ impl HoldThreshold {
     }
 }
 
+/// Half a second: the moment Windows itself starts treating a held key as
+/// held and repeats it. macOS does not document its own threshold.
 impl Default for HoldThreshold {
     fn default() -> Self {
-        Self(1000)
+        Self(500)
     }
 }
 
@@ -359,7 +363,7 @@ english = \"xx-XX\"
         let config = Config::parse("").unwrap();
         assert_eq!(config.layout.english.as_str(), "en-US");
         assert_eq!(config.layout.default_secondary, None);
-        assert_eq!(config.caps_lock.hold_threshold.as_millis(), 1000);
+        assert_eq!(config.caps_lock.hold_threshold.as_millis(), 500);
         assert!(!config.exclusions.contains("mstsc.exe"));
         assert_eq!(config, Config::default());
     }
@@ -396,6 +400,20 @@ english = \"xx-XX\"
     #[test]
     fn the_template_written_on_first_start_matches_the_defaults() {
         assert_eq!(Config::parse(Config::TEMPLATE).unwrap(), Config::default());
+    }
+
+    /// A value spelled out in the template would pin it in the user's file,
+    /// and a better default in a later version would never reach them.
+    #[test]
+    fn the_template_leaves_every_value_to_the_defaults() {
+        let template: toml::Table = toml::from_str(Config::TEMPLATE).unwrap();
+        for (section, values) in &template {
+            assert_eq!(
+                values.as_table().map(toml::Table::len),
+                Some(0),
+                "{section}"
+            );
+        }
     }
 
     #[test]
