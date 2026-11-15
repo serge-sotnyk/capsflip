@@ -1,0 +1,4 @@
+# Mutation testing covers the pure logic only. The Win32 shell in
+# crates/capsflip cannot be unit tested honestly; it is verified with
+# docs/manual-test.md instead.
+examine_globs = ["crates/capsflip-core/src/**/*.rs"]
