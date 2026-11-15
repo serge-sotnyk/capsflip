@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::exclusions::Exclusions;
+use crate::apps::Apps;
 use crate::layout::{LangId, LayoutPrefs};
 
 /// Everything the user can configure. The shape mirrors the TOML file.
@@ -14,7 +14,8 @@ use crate::layout::{LangId, LayoutPrefs};
 pub struct Config {
     pub layout: LayoutConfig,
     pub caps_lock: CapsLockConfig,
-    pub exclusions: Exclusions,
+    pub exclusions: ExclusionsConfig,
+    pub clipboard: ClipboardConfig,
 }
 
 impl Config {
@@ -37,8 +38,17 @@ impl Config {
 # hold_threshold_ms = 500
 
 [exclusions]
-# Programs in which Caps Lock is left alone, by executable name.
+# Programs in which capsflip leaves every key alone, by executable name.
+# A legacy console is conhost.exe, whatever runs in it.
 # apps = ["mstsc.exe", "vmware.exe"]
+
+[clipboard]
+# Win+C, Win+V and Win+X copy, paste and cut, as Cmd+C/V/X on a Mac.
+# Win+Shift+V then opens the clipboard history.
+# win_shortcuts = true
+# Terminals, where copy and paste go as Ctrl+Insert and Shift+Insert, so
+# that Win+C never interrupts a program, and cut does nothing.
+# terminals = ["WindowsTerminal.exe", "conhost.exe"]
 "#;
 
     /// Parses and validates the text of a config file.
@@ -120,7 +130,8 @@ impl Config {
                 default_secondary,
             },
             hold_threshold: self.caps_lock.hold_threshold,
-            exclusions: self.exclusions,
+            exclusions: self.exclusions.apps,
+            clipboard: self.clipboard,
         })
     }
 }
@@ -140,7 +151,9 @@ fn read_or_create(path: &Path) -> std::io::Result<String> {
 pub struct Settings {
     pub layouts: LayoutPrefs,
     pub hold_threshold: HoldThreshold,
-    pub exclusions: Exclusions,
+    /// Programs in which no rule fires.
+    pub exclusions: Apps,
+    pub clipboard: ClipboardConfig,
 }
 
 /// The defaults of [`Config`], resolved without asking the system: the
@@ -153,7 +166,33 @@ impl Default for Settings {
                 default_secondary: None,
             },
             hold_threshold: HoldThreshold::default(),
-            exclusions: Exclusions::default(),
+            exclusions: Apps::default(),
+            clipboard: ClipboardConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExclusionsConfig {
+    pub apps: Apps,
+}
+
+/// Win+C / V / X as copy, paste and cut.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClipboardConfig {
+    /// Off unless switched on: the keys replace what Windows does with them.
+    pub win_shortcuts: bool,
+    /// Programs where Ctrl+C interrupts, so copy and paste use Insert.
+    pub terminals: Apps,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            win_shortcuts: false,
+            terminals: Apps::new(["WindowsTerminal.exe", "conhost.exe"]),
         }
     }
 }
@@ -376,7 +415,8 @@ english = \"xx-XX\"
     fn resolving_turns_locale_tags_into_languages() {
         let settings = Config::parse(
             "[layout]\nenglish = \"en-GB\"\ndefault_secondary = \"uk-UA\"\n\
-             [caps_lock]\nhold_threshold_ms = 250\n[exclusions]\napps = [\"a.exe\"]\n",
+             [caps_lock]\nhold_threshold_ms = 250\n[exclusions]\napps = [\"a.exe\"]\n\
+             [clipboard]\nwin_shortcuts = true\n",
         )
         .unwrap()
         .resolve(known)
@@ -388,6 +428,7 @@ english = \"xx-XX\"
         );
         assert_eq!(settings.hold_threshold.as_millis(), 250);
         assert!(settings.exclusions.contains("a.exe"));
+        assert!(settings.clipboard.win_shortcuts);
     }
 
     #[test]
@@ -415,7 +456,10 @@ english = \"xx-XX\"
         assert_eq!(config.layout.english.as_str(), "en-US");
         assert_eq!(config.layout.default_secondary, None);
         assert_eq!(config.caps_lock.hold_threshold.as_millis(), 500);
-        assert!(!config.exclusions.contains("mstsc.exe"));
+        assert!(!config.exclusions.apps.contains("mstsc.exe"));
+        assert!(!config.clipboard.win_shortcuts, "off unless switched on");
+        assert!(config.clipboard.terminals.contains("WindowsTerminal.exe"));
+        assert!(config.clipboard.terminals.contains("conhost.exe"));
         assert_eq!(config, Config::default());
     }
 
@@ -432,6 +476,10 @@ english = \"xx-XX\"
 
             [exclusions]
             apps = ["mstsc.exe", "vmware.exe"]
+
+            [clipboard]
+            win_shortcuts = true
+            terminals = ["alacritty.exe"]
             "#,
         )
         .unwrap();
@@ -445,7 +493,13 @@ english = \"xx-XX\"
             Some("uk-UA")
         );
         assert_eq!(config.caps_lock.hold_threshold.as_millis(), 250);
-        assert!(config.exclusions.contains("vmware.exe"));
+        assert!(config.exclusions.apps.contains("vmware.exe"));
+        assert!(config.clipboard.win_shortcuts);
+        assert!(config.clipboard.terminals.contains("alacritty.exe"));
+        assert!(
+            !config.clipboard.terminals.contains("WindowsTerminal.exe"),
+            "the list in the file replaces the default one"
+        );
     }
 
     #[test]

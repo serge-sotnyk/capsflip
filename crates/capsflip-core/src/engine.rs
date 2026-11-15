@@ -49,8 +49,10 @@ struct Press {
 #[derive(Debug)]
 pub struct Engine {
     rules: Rules,
-    press: Option<Press>,
-    presses: u32,
+    /// The keys with rules that are down, one entry per key. Several can be
+    /// down at once: Win+X rolls into Win+V before X is released.
+    presses: Vec<Press>,
+    tokens: u32,
 }
 
 impl Engine {
@@ -58,8 +60,8 @@ impl Engine {
     pub const fn new(rules: Rules) -> Self {
         Self {
             rules,
-            press: None,
-            presses: 0,
+            presses: Vec::new(),
+            tokens: 0,
         }
     }
 
@@ -67,16 +69,18 @@ impl Engine {
     ///
     /// `bypassed` tells whether rules are switched off right now (paused, or
     /// an excluded application is in the foreground). It is asked only for
-    /// keys that have rules, so it may be expensive.
+    /// events that would be swallowed, so it may be expensive: a letter that
+    /// some rule uses with Win is typed without it being asked.
     pub fn on_key(&mut self, event: KeyEvent, bypassed: impl FnOnce() -> bool) -> Decision {
-        if event.injected || !self.rules.concern(event.key) {
+        if event.injected {
             return Decision::Pass;
         }
-        if bypassed() {
-            self.press = None;
+        let decision = self.step(event);
+        if decision.swallows() && bypassed() {
+            self.forget(event.key);
             return Decision::Pass;
         }
-        self.step(event)
+        decision
     }
 
     /// The transition table: event kind against the press in progress.
@@ -91,17 +95,17 @@ impl Engine {
 
     /// Reports that the hold threshold of the press with this token elapsed.
     pub fn on_hold_timer(&mut self, token: HoldToken) -> Option<Action> {
-        let press = self.press.as_mut()?;
-        if press.phase != Phase::Undecided(token) {
-            return None;
-        }
+        let press = self
+            .presses
+            .iter_mut()
+            .find(|press| press.phase == Phase::Undecided(token))?;
         press.phase = Phase::Spent;
         self.rules.action(Trigger::Hold(press.key))
     }
 
     fn begin(&mut self, event: KeyEvent) -> Decision {
         let (phase, decision) = self.classify(event);
-        self.press = Some(Press {
+        self.presses.push(Press {
             key: event.key,
             phase,
         });
@@ -121,8 +125,8 @@ impl Engine {
         if !has_hold && !has_tap {
             return (Phase::Passing, Decision::Pass);
         }
-        self.presses = self.presses.wrapping_add(1);
-        let token = HoldToken(self.presses);
+        self.tokens = self.tokens.wrapping_add(1);
+        let token = HoldToken(self.tokens);
         let decision = if has_hold {
             Decision::ArmHold(token)
         } else {
@@ -132,7 +136,7 @@ impl Engine {
     }
 
     fn end(&mut self, key: Key, phase: Phase) -> Decision {
-        self.press = None;
+        self.forget(key);
         match phase {
             Phase::Passing => Decision::Pass,
             Phase::Spent => Decision::Swallow,
@@ -144,9 +148,14 @@ impl Engine {
     }
 
     fn phase_of(&self, key: Key) -> Option<Phase> {
-        self.press
-            .filter(|press| press.key == key)
+        self.presses
+            .iter()
+            .find(|press| press.key == key)
             .map(|press| press.phase)
+    }
+
+    fn forget(&mut self, key: Key) {
+        self.presses.retain(|press| press.key != key);
     }
 }
 
@@ -154,7 +163,7 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::key::{Key, KeyEvent, KeyKind, Modifiers};
-    use crate::rules::{Action, Rule, Rules, Trigger};
+    use crate::rules::{Action, Clip, Rule, Rules, Trigger};
 
     const CAPS: Key = Key::CAPS_LOCK;
     const LETTER_A: Key = Key::from_vk(0x41);
@@ -337,6 +346,84 @@ mod tests {
         let never = || panic!("asked whether an unrelated or injected key is bypassed");
         assert_eq!(e.on_key(down(LETTER_A), never), Decision::Pass);
         assert_eq!(e.on_key(injected(down(CAPS)), never), Decision::Pass);
+    }
+
+    fn win(key: Key, kind: KeyKind) -> KeyEvent {
+        event(key, kind, Modifiers::WIN)
+    }
+
+    fn clipboard() -> Engine {
+        Engine::new(Rules::keyboard(true))
+    }
+
+    #[test]
+    fn a_roll_from_one_chord_to_the_next_swallows_both_releases() {
+        let mut e = clipboard();
+        let mut key = |event| e.on_key(event, || false);
+        assert_eq!(
+            key(win(Key::X, KeyKind::Down)),
+            Decision::Run(Action::Clipboard(Clip::Cut))
+        );
+        assert_eq!(
+            key(win(Key::V, KeyKind::Down)),
+            Decision::Run(Action::Clipboard(Clip::Paste))
+        );
+        assert_eq!(key(win(Key::X, KeyKind::Up)), Decision::Swallow);
+        assert_eq!(key(win(Key::V, KeyKind::Up)), Decision::Swallow);
+    }
+
+    #[test]
+    fn a_caps_lock_press_outlives_a_chord_made_during_it() {
+        let mut e = Active(clipboard());
+        let token = e.press_caps();
+        assert_eq!(
+            e.key(win(Key::C, KeyKind::Down)),
+            Decision::Run(Action::Clipboard(Clip::Copy))
+        );
+        assert_eq!(e.key(win(Key::C, KeyKind::Up)), Decision::Swallow);
+        assert_eq!(e.0.on_hold_timer(token), Some(Action::ToggleCapsLock));
+        assert_eq!(e.key(up(CAPS)), Decision::Swallow);
+    }
+
+    #[test]
+    fn holding_a_chord_runs_its_action_once() {
+        let mut e = Active(clipboard());
+        assert!(matches!(
+            e.key(win(Key::V, KeyKind::Down)),
+            Decision::Run(_)
+        ));
+        assert_eq!(e.key(win(Key::V, KeyKind::Down)), Decision::Swallow);
+        assert_eq!(e.key(win(Key::V, KeyKind::Down)), Decision::Swallow);
+        assert_eq!(e.key(win(Key::V, KeyKind::Up)), Decision::Swallow);
+    }
+
+    #[test]
+    fn the_bypass_question_is_asked_only_for_events_that_would_be_swallowed() {
+        let mut e = clipboard();
+        let never = || panic!("asked whether a plain letter is bypassed");
+        assert_eq!(e.on_key(down(Key::C), never), Decision::Pass);
+        assert_eq!(e.on_key(up(Key::C), never), Decision::Pass);
+        let shift_c = event(Key::C, KeyKind::Down, Modifiers::SHIFT);
+        assert_eq!(e.on_key(shift_c, never), Decision::Pass);
+    }
+
+    #[test]
+    fn while_bypassed_a_chord_passes_whole() {
+        let mut e = clipboard();
+        assert_eq!(
+            e.on_key(win(Key::C, KeyKind::Down), || true),
+            Decision::Pass
+        );
+        assert_eq!(
+            e.on_key(win(Key::C, KeyKind::Down), || true),
+            Decision::Pass
+        );
+        assert_eq!(e.on_key(win(Key::C, KeyKind::Up), || true), Decision::Pass);
+        assert_eq!(
+            e.on_key(win(Key::C, KeyKind::Down), || false),
+            Decision::Run(Action::Clipboard(Clip::Copy)),
+            "a new press once the bypass is over"
+        );
     }
 
     #[test]

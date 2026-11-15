@@ -1,12 +1,13 @@
 //! The controller: connects the engine and the layout tracker to the
 //! operating system, which it reaches only through [`Platform`].
 
+use crate::apps::Apps;
 use crate::config::{HoldThreshold, Settings};
 use crate::engine::{Decision, Engine, HoldToken};
-use crate::exclusions::Exclusions;
-use crate::key::KeyEvent;
+use crate::key::{Key, KeyEvent, Modifiers};
 use crate::layout::{LayoutId, LayoutTracker};
-use crate::rules::{Action, Rules};
+use crate::rules::{Action, Combo, Rules};
+use crate::strokes::{self, MODIFIER_KEYS, Stroke};
 
 /// Everything the controller needs from the operating system.
 ///
@@ -21,8 +22,10 @@ pub trait Platform {
     fn installed_layouts(&self) -> Vec<LayoutId>;
     /// Asks the foreground window to switch to `layout`.
     fn activate_layout(&mut self, layout: LayoutId);
-    /// Toggles the real Caps Lock state.
-    fn toggle_caps_lock(&mut self);
+    /// Whether `key` is down right now.
+    fn is_down(&self, key: Key) -> bool;
+    /// Injects `strokes` in order, all at once.
+    fn send_keys(&mut self, strokes: &[Stroke]);
     /// Arranges a call to [`Controller::on_hold_timer`] with `token` once
     /// `after` has elapsed.
     fn arm_hold_timer(&mut self, token: HoldToken, after: HoldThreshold);
@@ -34,7 +37,9 @@ pub struct Controller {
     engine: Engine,
     tracker: LayoutTracker,
     hold_threshold: HoldThreshold,
-    exclusions: Exclusions,
+    exclusions: Apps,
+    /// Where copy and paste go as Ctrl+Insert and Shift+Insert.
+    terminals: Apps,
     paused: bool,
     pending: Vec<Decision>,
 }
@@ -43,10 +48,11 @@ impl Controller {
     #[must_use]
     pub fn new(settings: Settings) -> Self {
         Self {
-            engine: Engine::new(Rules::caps_lock()),
+            engine: Engine::new(Rules::keyboard(settings.clipboard.win_shortcuts)),
             tracker: LayoutTracker::new(settings.layouts),
             hold_threshold: settings.hold_threshold,
             exclusions: settings.exclusions,
+            terminals: settings.clipboard.terminals,
             paused: false,
             pending: Vec::new(),
         }
@@ -55,9 +61,11 @@ impl Controller {
     /// Applies settings read again from the config file. The layout learned
     /// so far is kept: it reflects what the user actually types in.
     pub fn reload(&mut self, settings: Settings) {
+        self.engine = Engine::new(Rules::keyboard(settings.clipboard.win_shortcuts));
         self.tracker.set_prefs(settings.layouts);
         self.hold_threshold = settings.hold_threshold;
         self.exclusions = settings.exclusions;
+        self.terminals = settings.clipboard.terminals;
     }
 
     #[must_use]
@@ -116,9 +124,19 @@ impl Controller {
     }
 
     fn perform(&mut self, action: Action, platform: &mut impl Platform) {
-        match action {
-            Action::ToggleLayout => self.toggle_layout(platform),
-            Action::ToggleCapsLock => platform.toggle_caps_lock(),
+        let combo = match action {
+            Action::ToggleLayout => return self.toggle_layout(platform),
+            Action::ToggleCapsLock => Some(Combo {
+                mods: Modifiers::NONE,
+                key: Key::CAPS_LOCK,
+            }),
+            Action::Clipboard(clip) => {
+                clip.combo(self.terminals.contains(&platform.foreground_executable()))
+            }
+            Action::Send(combo) => Some(combo),
+        };
+        if let Some(combo) = combo {
+            send(combo, platform);
         }
     }
 
@@ -133,12 +151,23 @@ impl Controller {
     }
 }
 
+/// Injects `combo`, working around the modifiers the user holds now.
+fn send(combo: Combo, platform: &mut impl Platform) {
+    let held: Vec<Key> = MODIFIER_KEYS
+        .into_iter()
+        .filter(|key| platform.is_down(*key))
+        .collect();
+    platform.send_keys(&strokes::sequence(combo, &held));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Config, HoldThreshold};
     use crate::key::{Key, KeyEvent, KeyKind, Modifiers};
     use crate::layout::{LangId, LayoutId};
+    use crate::rules::Combo;
+    use crate::strokes::{self, Stroke};
 
     const EN_US: LayoutId = LayoutId::from_raw(0x0409_0409);
     const EN_GB: LayoutId = LayoutId::from_raw(0x0809_0809);
@@ -152,7 +181,10 @@ mod tests {
         executable: &'static str,
         installed: Vec<LayoutId>,
         activated: Vec<LayoutId>,
-        caps_lock_toggles: u32,
+        /// The keys the user holds.
+        down: Vec<Key>,
+        /// Every injected sequence.
+        sent: Vec<Vec<Stroke>>,
         armed: Vec<(HoldToken, HoldThreshold)>,
     }
 
@@ -164,9 +196,18 @@ mod tests {
                 executable: "notepad.exe",
                 installed: vec![EN_GB, EN_US, RU, UK],
                 activated: Vec::new(),
-                caps_lock_toggles: 0,
+                down: Vec::new(),
+                sent: Vec::new(),
                 armed: Vec::new(),
             }
+        }
+
+        /// How many injected sequences toggled Caps Lock.
+        fn caps_lock_toggles(&self) -> usize {
+            self.sent
+                .iter()
+                .filter(|strokes| strokes.iter().any(|s| s.key == Key::CAPS_LOCK))
+                .count()
         }
     }
 
@@ -188,8 +229,12 @@ mod tests {
             self.activated.push(layout);
         }
 
-        fn toggle_caps_lock(&mut self) {
-            self.caps_lock_toggles += 1;
+        fn is_down(&self, key: Key) -> bool {
+            self.down.contains(&key)
+        }
+
+        fn send_keys(&mut self, strokes: &[Stroke]) {
+            self.sent.push(strokes.to_vec());
         }
 
         fn arm_hold_timer(&mut self, token: HoldToken, after: HoldThreshold) {
@@ -285,12 +330,12 @@ mod tests {
         assert_eq!(after.as_millis(), 700);
 
         c.on_hold_timer(token, &mut desktop);
-        assert_eq!(desktop.caps_lock_toggles, 1);
+        assert_eq!(desktop.caps_lock_toggles(), 1);
 
         assert!(c.on_key(caps(KeyKind::Up, Modifiers::NONE), &desktop));
         c.run_pending(&mut desktop);
         assert_eq!(desktop.activated, []);
-        assert_eq!(desktop.caps_lock_toggles, 1);
+        assert_eq!(desktop.caps_lock_toggles(), 1);
     }
 
     #[test]
@@ -303,7 +348,7 @@ mod tests {
         c.on_key(caps(KeyKind::Up, Modifiers::NONE), &desktop);
         c.run_pending(&mut desktop);
         c.on_hold_timer(token, &mut desktop);
-        assert_eq!(desktop.caps_lock_toggles, 0);
+        assert_eq!(desktop.caps_lock_toggles(), 0);
     }
 
     #[test]
@@ -313,8 +358,132 @@ mod tests {
         assert!(c.on_key(caps(KeyKind::Down, Modifiers::SHIFT), &desktop));
         c.on_key(caps(KeyKind::Up, Modifiers::SHIFT), &desktop);
         c.run_pending(&mut desktop);
-        assert_eq!(desktop.caps_lock_toggles, 1);
+        assert_eq!(desktop.caps_lock_toggles(), 1);
         assert_eq!(desktop.activated, []);
+    }
+
+    const WIN_SHORTCUTS: &str = "[clipboard]\nwin_shortcuts = true\n";
+
+    /// Presses `key` with Win (and Shift when asked) held, then lets the
+    /// message loop run.
+    fn win(c: &mut Controller, desktop: &mut Desktop, key: Key, mods: Modifiers) -> bool {
+        let press = KeyEvent {
+            key,
+            kind: KeyKind::Down,
+            mods,
+            injected: false,
+        };
+        let swallowed = c.on_key(press, desktop);
+        c.on_key(
+            KeyEvent {
+                kind: KeyKind::Up,
+                ..press
+            },
+            desktop,
+        );
+        c.run_pending(desktop);
+        swallowed
+    }
+
+    fn sequence(mods: Modifiers, key: Key, held: &[Key]) -> Vec<Stroke> {
+        strokes::sequence(Combo { mods, key }, held)
+    }
+
+    #[test]
+    fn win_c_v_x_send_ctrl_c_v_x_with_win_let_go_around_them() {
+        let mut c = controller(WIN_SHORTCUTS);
+        let mut desktop = Desktop::typing_in(EN_US);
+        desktop.down = vec![Key::LWIN];
+        for key in [Key::C, Key::V, Key::X] {
+            assert!(win(&mut c, &mut desktop, key, Modifiers::WIN));
+        }
+        let held = [Key::LWIN];
+        assert_eq!(
+            desktop.sent,
+            [
+                sequence(Modifiers::CTRL, Key::C, &held),
+                sequence(Modifiers::CTRL, Key::V, &held),
+                sequence(Modifiers::CTRL, Key::X, &held),
+            ]
+        );
+    }
+
+    #[test]
+    fn in_a_terminal_copy_and_paste_use_insert_and_cut_sends_nothing() {
+        let mut c = controller(WIN_SHORTCUTS);
+        let mut desktop = Desktop::typing_in(EN_US);
+        desktop.executable = "WindowsTerminal.exe";
+        desktop.down = vec![Key::RWIN];
+        for key in [Key::C, Key::V, Key::X] {
+            assert!(win(&mut c, &mut desktop, key, Modifiers::WIN), "swallowed");
+        }
+        let held = [Key::RWIN];
+        assert_eq!(
+            desktop.sent,
+            [
+                sequence(Modifiers::CTRL, Key::INSERT, &held),
+                sequence(Modifiers::SHIFT, Key::INSERT, &held),
+            ]
+        );
+    }
+
+    #[test]
+    fn win_shift_v_opens_the_clipboard_history() {
+        let mut c = controller(WIN_SHORTCUTS);
+        let mut desktop = Desktop::typing_in(EN_US);
+        desktop.down = vec![Key::LWIN, Key::LSHIFT];
+        assert!(win(&mut c, &mut desktop, Key::V, Modifiers::WIN_SHIFT));
+        assert_eq!(
+            desktop.sent,
+            [sequence(Modifiers::WIN, Key::V, &desktop.down)]
+        );
+    }
+
+    #[test]
+    fn win_shortcuts_are_off_until_switched_on_in_config() {
+        let mut c = controller("");
+        let mut desktop = Desktop::typing_in(EN_US);
+        assert!(!win(&mut c, &mut desktop, Key::C, Modifiers::WIN));
+        assert_eq!(desktop.sent, Vec::<Vec<Stroke>>::new());
+
+        c.reload(settings(WIN_SHORTCUTS));
+        assert!(win(&mut c, &mut desktop, Key::C, Modifiers::WIN));
+    }
+
+    #[test]
+    fn reload_can_switch_the_win_shortcuts_off_and_change_the_terminals() {
+        let mut c = controller(WIN_SHORTCUTS);
+        let mut desktop = Desktop::typing_in(EN_US);
+        c.reload(settings(
+            "[clipboard]\nwin_shortcuts = true\nterminals = [\"notepad.exe\"]\n",
+        ));
+        win(&mut c, &mut desktop, Key::C, Modifiers::WIN);
+        assert_eq!(desktop.sent, [sequence(Modifiers::CTRL, Key::INSERT, &[])]);
+
+        c.reload(settings(""));
+        assert!(!win(&mut c, &mut desktop, Key::C, Modifiers::WIN));
+    }
+
+    #[test]
+    fn in_an_excluded_application_win_c_is_left_to_windows() {
+        let mut c =
+            controller("[clipboard]\nwin_shortcuts = true\n[exclusions]\napps = [\"mstsc.exe\"]\n");
+        let mut desktop = Desktop::typing_in(EN_US);
+        desktop.executable = "mstsc.exe";
+        assert!(!win(&mut c, &mut desktop, Key::C, Modifiers::WIN));
+        assert_eq!(desktop.sent, Vec::<Vec<Stroke>>::new());
+    }
+
+    #[test]
+    fn caps_lock_is_toggled_with_shift_let_go_first() {
+        let mut c = controller("");
+        let mut desktop = Desktop::typing_in(EN_US);
+        desktop.down = vec![Key::LSHIFT];
+        win(&mut c, &mut desktop, Key::CAPS_LOCK, Modifiers::SHIFT);
+        assert_eq!(
+            desktop.sent,
+            [sequence(Modifiers::NONE, Key::CAPS_LOCK, &[Key::LSHIFT])]
+        );
     }
 
     #[test]

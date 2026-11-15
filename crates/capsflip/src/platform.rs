@@ -3,15 +3,18 @@
 use capsflip_core::config::HoldThreshold;
 use capsflip_core::controller::Platform;
 use capsflip_core::engine::HoldToken;
+use capsflip_core::key::{Key, KeyKind};
 use capsflip_core::layout::LayoutId;
+use capsflip_core::strokes::Stroke;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyboardLayout, GetKeyboardLayoutList, HKL, INPUT, INPUT_0, INPUT_KEYBOARD,
-    KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_CAPITAL,
+    GetAsyncKeyState, GetKeyboardLayout, GetKeyboardLayoutList, HKL, INPUT, INPUT_0,
+    INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+    SendInput, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GUITHREADINFO, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
@@ -41,7 +44,7 @@ impl Platform for Win32 {
     }
 
     fn foreground_executable(&self) -> String {
-        executable_of(unsafe { GetForegroundWindow() }).unwrap_or_default()
+        executable_of(input_window(unsafe { GetForegroundWindow() })).unwrap_or_default()
     }
 
     fn installed_layouts(&self) -> Vec<LayoutId> {
@@ -66,11 +69,21 @@ impl Platform for Win32 {
         ));
     }
 
-    fn toggle_caps_lock(&mut self) {
-        let inputs = [caps_lock(KEYBD_EVENT_FLAGS(0)), caps_lock(KEYEVENTF_KEYUP)];
+    fn is_down(&self, key: Key) -> bool {
+        let state = unsafe { GetAsyncKeyState(i32::from(key.vk())) };
+        state < 0
+    }
+
+    fn send_keys(&mut self, strokes: &[Stroke]) {
+        let inputs: Vec<INPUT> = strokes.iter().map(|stroke| input(*stroke)).collect();
         let size = i32::try_from(size_of::<INPUT>()).unwrap_or_default();
         let sent = unsafe { SendInput(&inputs, size) };
-        log(&format!("Caps Lock toggled: {sent} of 2 events injected"));
+        let listed: Vec<String> = strokes.iter().map(|stroke| written(*stroke)).collect();
+        log(&format!(
+            "injected {sent} of {}: {}",
+            inputs.len(),
+            listed.join(" ")
+        ));
     }
 
     fn arm_hold_timer(&mut self, token: HoldToken, after: HoldThreshold) {
@@ -112,8 +125,15 @@ fn focus_thread() -> Option<u32> {
 /// belongs to the real thread in `conhost.exe`, whose layout follows every
 /// switch (see `examples/console.rs`).
 fn input_thread(window: HWND) -> u32 {
+    unsafe { GetWindowThreadProcessId(input_window(window), None) }
+}
+
+/// The default IME window of `window`, or `window` itself when it has none.
+/// Its owner is the thread and the process that take the input of `window`;
+/// for a legacy console that is `conhost.exe`, whatever runs in it.
+fn input_window(window: HWND) -> HWND {
     let ime = Some(unsafe { ImmGetDefaultIMEWnd(window) }).filter(|ime| !ime.is_invalid());
-    unsafe { GetWindowThreadProcessId(ime.unwrap_or(window), None) }
+    ime.unwrap_or(window)
 }
 
 /// The file name of the executable that owns `window`.
@@ -145,17 +165,31 @@ fn describe(window: HWND) -> String {
     format!("{class} ({})", executable_of(window).unwrap_or_default())
 }
 
-fn caps_lock(flags: KEYBD_EVENT_FLAGS) -> INPUT {
+/// One injected key event, with the extended-key flag where the key has it.
+fn input(stroke: Stroke) -> INPUT {
+    let up = (stroke.kind == KeyKind::Up).then_some(KEYEVENTF_KEYUP);
+    let extended = stroke.key.extended().then_some(KEYEVENTF_EXTENDEDKEY);
+    let flags = [up, extended].into_iter().flatten();
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: VK_CAPITAL,
-                dwFlags: flags,
+                wVk: VIRTUAL_KEY(stroke.key.vk()),
+                dwFlags: flags.fold(KEYBD_EVENT_FLAGS(0), |all, flag| all | flag),
                 ..Default::default()
             },
         },
     }
+}
+
+/// A stroke for the log, such as `0x5b↑`. Only modifiers, C, V, X, Insert,
+/// Caps Lock and the mask are ever injected, so nothing typed is logged.
+fn written(stroke: Stroke) -> String {
+    let arrow = match stroke.kind {
+        KeyKind::Down => '↓',
+        KeyKind::Up => '↑',
+    };
+    format!("{:#04x}{arrow}", stroke.key.vk())
 }
 
 #[cfg(test)]
@@ -182,6 +216,55 @@ mod tests {
         let window = crate::create_window().expect("a window");
         let this_thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
         assert_eq!(input_thread(window), this_thread);
+    }
+
+    #[test]
+    fn a_window_is_named_after_the_process_that_takes_its_input() {
+        let window = crate::create_window().expect("a window");
+        let this_test = std::env::current_exe().unwrap();
+        let expected = this_test.file_name().unwrap().to_str().unwrap();
+        assert_eq!(
+            executable_of(input_window(window)).as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn an_injected_event_carries_the_release_and_extended_key_flags() {
+        let event = |key, kind| unsafe { input(Stroke { key, kind }).Anonymous.ki };
+        let insert_up = event(Key::INSERT, KeyKind::Up);
+        assert_eq!(insert_up.wVk, VIRTUAL_KEY(0x2d));
+        assert_eq!(insert_up.dwFlags, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY);
+        assert_eq!(
+            event(Key::LWIN, KeyKind::Down).dwFlags,
+            KEYEVENTF_EXTENDEDKEY
+        );
+        assert_eq!(event(Key::C, KeyKind::Up).dwFlags, KEYEVENTF_KEYUP);
+        assert_eq!(event(Key::C, KeyKind::Down).dwFlags, KEYBD_EVENT_FLAGS(0));
+    }
+
+    #[test]
+    fn strokes_are_logged_by_key_code_and_direction() {
+        let up = Stroke {
+            key: Key::LWIN,
+            kind: KeyKind::Up,
+        };
+        let down = Stroke {
+            key: Key::C,
+            kind: KeyKind::Down,
+        };
+        assert_eq!(written(up), "0x5b↑");
+        assert_eq!(written(down), "0x43↓");
+    }
+
+    #[test]
+    fn the_mask_key_is_never_down() {
+        let platform = Win32 {
+            window: HWND::default(),
+            on_hold_timer: None,
+            hold_token: None,
+        };
+        assert!(!platform.is_down(Key::MASK));
     }
 
     #[test]
