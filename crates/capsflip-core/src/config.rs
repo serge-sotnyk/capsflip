@@ -5,6 +5,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::exclusions::Exclusions;
+use crate::layout::{LangId, LayoutPrefs};
 
 /// Everything the user can configure. The shape mirrors the TOML file.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize)]
@@ -46,6 +47,55 @@ apps = []
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         toml::from_str(text).map_err(|error| ConfigError(error.to_string()))
     }
+
+    /// Turns the locale tags into languages, using the system's `lang_of`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the tag when the system does not know a
+    /// locale, or when `layout.english` is not an English locale.
+    pub fn resolve(
+        self,
+        lang_of: impl Fn(&str) -> Option<LangId>,
+    ) -> Result<Settings, ConfigError> {
+        let resolve = |tag: &LocaleTag| {
+            lang_of(tag.as_str()).ok_or_else(|| {
+                ConfigError(format!(
+                    "Windows does not know the locale `{}`",
+                    tag.as_str()
+                ))
+            })
+        };
+        let english = resolve(&self.layout.english)?;
+        if !english.is_english() {
+            return Err(ConfigError(format!(
+                "layout.english must be an English locale, got `{}`",
+                self.layout.english.as_str()
+            )));
+        }
+        let default_secondary = self
+            .layout
+            .default_secondary
+            .as_ref()
+            .map(resolve)
+            .transpose()?;
+        Ok(Settings {
+            layouts: LayoutPrefs {
+                english,
+                default_secondary,
+            },
+            hold_threshold: self.caps_lock.hold_threshold,
+            exclusions: self.exclusions,
+        })
+    }
+}
+
+/// A config whose locale tags the system has resolved to languages.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Settings {
+    pub layouts: LayoutPrefs,
+    pub hold_threshold: HoldThreshold,
+    pub exclusions: Exclusions,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
@@ -153,6 +203,60 @@ mod tests {
         Config::parse(text)
             .expect_err("config should be rejected")
             .to_string()
+    }
+
+    fn known(tag: &str) -> Option<LangId> {
+        match tag {
+            "en-US" => Some(LangId::new(0x0409)),
+            "en-GB" => Some(LangId::new(0x0809)),
+            "uk-UA" => Some(LangId::new(0x0422)),
+            _ => None,
+        }
+    }
+
+    fn resolve_error_of(text: &str) -> String {
+        Config::parse(text)
+            .unwrap()
+            .resolve(known)
+            .expect_err("settings should be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn resolving_turns_locale_tags_into_languages() {
+        let settings = Config::parse(
+            "[layout]\nenglish = \"en-GB\"\ndefault_secondary = \"uk-UA\"\n\
+             [caps_lock]\nhold_threshold_ms = 250\n[exclusions]\napps = [\"a.exe\"]\n",
+        )
+        .unwrap()
+        .resolve(known)
+        .unwrap();
+        assert_eq!(settings.layouts.english, LangId::new(0x0809));
+        assert_eq!(
+            settings.layouts.default_secondary,
+            Some(LangId::new(0x0422))
+        );
+        assert_eq!(settings.hold_threshold.as_millis(), 250);
+        assert!(settings.exclusions.contains("a.exe"));
+    }
+
+    #[test]
+    fn resolving_the_defaults_needs_only_the_english_locale() {
+        let settings = Config::default().resolve(known).unwrap();
+        assert_eq!(settings.layouts.english, LangId::new(0x0409));
+        assert_eq!(settings.layouts.default_secondary, None);
+    }
+
+    #[test]
+    fn a_locale_the_system_does_not_know_is_rejected_by_name() {
+        assert!(resolve_error_of("[layout]\nenglish = \"xx-XX\"\n").contains("xx-XX"));
+        assert!(resolve_error_of("[layout]\ndefault_secondary = \"yy-YY\"\n").contains("yy-YY"));
+    }
+
+    #[test]
+    fn the_english_layout_must_be_english() {
+        let error = resolve_error_of("[layout]\nenglish = \"uk-UA\"\n");
+        assert!(error.contains("must be an English locale"), "{error}");
     }
 
     #[test]
