@@ -19,7 +19,7 @@ changes; do not let it drift from the code.
 | Short Caps Lock press | Toggles between the configured English layout and the last used non-English layout |
 | Real Caps Lock | Both a long press (threshold in config, default 500 ms) and Shift+Caps Lock toggle it. macOS does not document its threshold; 500 ms is when Windows starts repeating a held key |
 | Long press timing | Fires when the threshold elapses while the key is still held, not on release |
-| Last non-English layout | Tracked in the background, including manual switches (Ctrl+Shift, mouse, Win+Space). One global value, not per window |
+| Last non-English layout | Tracked in the background, including manual switches (Ctrl+Shift, mouse, Win+Space). One global value, not per window. Any non-English layout seen in the focused window counts, so a window brought to the front with its own layout (Windows keeps one per window) makes that layout the pair of English. Revisit after daily use: #24 |
 | Value right after start | `default_secondary` from config, otherwise the first non-English layout installed |
 | Phantom en-GB | Bypassed only: capsflip always activates one specific layout, and treats any English layout as "English" when reading the current one. It never removes layouts |
 | Configured English missing | Warn, then fall back to any installed English layout |
