@@ -4,3 +4,5 @@
 //! between Win32 and these types. See `docs/design.md`.
 
 #![forbid(unsafe_code)]
+
+pub mod layout;
