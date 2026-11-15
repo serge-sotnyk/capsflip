@@ -60,6 +60,11 @@ impl Controller {
         self.exclusions = settings.exclusions;
     }
 
+    #[must_use]
+    pub const fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     /// Pauses or resumes every rule and returns whether it is paused now.
     /// Layouts chosen by hand are still remembered while paused.
     pub fn toggle_pause(&mut self) -> bool {
@@ -328,7 +333,9 @@ mod tests {
     fn while_paused_caps_lock_is_left_alone() {
         let mut c = controller("");
         let mut desktop = Desktop::typing_in(EN_US);
+        assert!(!c.is_paused());
         assert!(c.toggle_pause(), "now paused");
+        assert!(c.is_paused());
         assert!(!c.on_key(caps(KeyKind::Down, Modifiers::NONE), &desktop));
         assert!(!c.on_key(caps(KeyKind::Up, Modifiers::NONE), &desktop));
         c.run_pending(&mut desktop);
