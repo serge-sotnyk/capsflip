@@ -70,6 +70,19 @@ impl Config {
             .map_err(|ConfigError(reason)| ConfigError(format!("{}: {reason}", path.display())))
     }
 
+    /// Like [`Self::load`], but a rejected file does not stop capsflip: it
+    /// starts with the built-in settings and the reason is handed back to be
+    /// shown, so a typo in the file never leaves the keyboard without it.
+    pub fn load_or_defaults(
+        path: &Path,
+        lang_of: impl Fn(&str) -> Option<LangId>,
+    ) -> (Settings, Option<ConfigError>) {
+        match Self::load(path, lang_of) {
+            Ok(settings) => (settings, None),
+            Err(problem) => (Settings::default(), Some(problem)),
+        }
+    }
+
     /// Turns the locale tags into languages, using the system's `lang_of`.
     ///
     /// # Errors
@@ -128,6 +141,21 @@ pub struct Settings {
     pub layouts: LayoutPrefs,
     pub hold_threshold: HoldThreshold,
     pub exclusions: Exclusions,
+}
+
+/// The defaults of [`Config`], resolved without asking the system: the
+/// language of `en-US` is fixed.
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            layouts: LayoutPrefs {
+                english: LangId::new(0x0409),
+                default_secondary: None,
+            },
+            hold_threshold: HoldThreshold::default(),
+            exclusions: Exclusions::default(),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
@@ -319,6 +347,29 @@ english = \"xx-XX\"
             .resolve(known)
             .expect_err("settings should be rejected")
             .to_string()
+    }
+
+    #[test]
+    fn the_built_in_settings_are_the_resolved_defaults() {
+        assert_eq!(
+            Settings::default(),
+            Config::default().resolve(known).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_rejected_file_still_gives_settings_to_start_with() {
+        let path = scratch("fallback").join("config.toml");
+        std::fs::write(&path, "[layout]\nenglish = 5\n").unwrap();
+        let (settings, problem) = Config::load_or_defaults(&path, known);
+        assert_eq!(settings, Settings::default());
+        let problem = problem.expect("the reason is reported").to_string();
+        assert!(problem.contains("config.toml"), "{problem}");
+
+        std::fs::write(&path, "[caps_lock]\nhold_threshold_ms = 250\n").unwrap();
+        let (settings, problem) = Config::load_or_defaults(&path, known);
+        assert_eq!(settings.hold_threshold.as_millis(), 250);
+        assert_eq!(problem, None);
     }
 
     #[test]
