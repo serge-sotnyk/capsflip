@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - name: The tag matches the version in Cargo.toml
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            Write-Error "tag $env:GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          }
+      - name: Build release binaries
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc
+          cargo build --release --target aarch64-pc-windows-msvc
+      - name: Collect the binaries and their SHA-256 sums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/capsflip.exe dist/capsflip-x64.exe
+          Copy-Item target/aarch64-pc-windows-msvc/release/capsflip.exe dist/capsflip-arm64.exe
+          Get-FileHash -Algorithm SHA256 dist/*.exe |
+            ForEach-Object { '{0}  {1}' -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content dist/SHA256SUMS.txt
+      - name: Publish the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME dist/* --title "capsflip $env:GITHUB_REF_NAME" --generate-notes
