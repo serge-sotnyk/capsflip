@@ -66,6 +66,34 @@ The letters must change language each time.
       `capsflip` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 - [ ] Quit: the icon disappears and the process ends.
 
+## Win+C / V / X
+
+First with the default config:
+
+- [ ] Win+C, Win+V and Win+X do what Windows does (Copilot, the clipboard
+      history, the quick link menu).
+
+Then set `win_shortcuts = true` under `[clipboard]` and Reload config:
+
+- [ ] In Notepad, Chrome and VS Code: Win+C copies, Win+V pastes, Win+X
+      cuts a selection. Copilot, the clipboard history and the quick link
+      menu do not open.
+- [ ] In Explorer: Win+C and Win+V copy a file; Win+X and Win+V move one.
+- [ ] In Windows Terminal and the legacy console: Win+C copies a
+      selection, Win+V pastes, Win+X does nothing. Run `ping -t localhost`:
+      Win+C without a selection does not stop it.
+- [ ] Win+Shift+V opens the clipboard history, and Esc closes it.
+- [ ] Without letting go of Win: Win+C, then Win+V; Win+X rolling into
+      Win+V; Win+C, then Win+D or Win+E.
+- [ ] Start never opens on the release of Win after any of these; a lone
+      Win still opens it.
+- [ ] Holding Win+V pastes once.
+- [ ] c, v and x type as usual, also with Shift; Ctrl+C, Ctrl+V and Ctrl+X
+      work as before.
+- [ ] Paused, or with the foreground program in `exclusions`, Win+C/V/X do
+      what Windows does.
+- [ ] Caps Lock still switches layouts and holds still toggle capitals.
+
 ## Staying alive
 
 - [ ] Restart Explorer (`taskkill /f /im explorer.exe`, then
@@ -76,4 +104,5 @@ The letters must change language each time.
 ## Known limits
 
 - [ ] In a window run as administrator, Caps Lock behaves as plain Caps
-      Lock. This is by design: capsflip runs unelevated.
+      Lock and Win+C/V/X do what Windows does. This is by design: capsflip
+      runs unelevated.

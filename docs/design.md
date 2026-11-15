@@ -81,6 +81,15 @@ release nor the physical one opens Start.
   active, whatever caused it.
 - **Excluded app**: an executable listed in config. While its window is in the
   foreground, no rule fires and keys pass through untouched.
+- **Combination**: a key with exactly these modifiers, as the system should
+  see it, for example Ctrl+C. capsflip injects it in place of what the user
+  pressed.
+- **Mask**: an unassigned key (`vkE8`) injected around the release of Win.
+  Windows opens Start when Win is released with no other key since it went
+  down; the mask is that other key.
+- **Terminal**: an executable on the `terminals` list in config. There copy
+  and paste are Ctrl+Insert and Shift+Insert, because Ctrl+C interrupts a
+  program, and cut does nothing.
 
 ## Architecture
 
@@ -92,25 +101,40 @@ shell.
 
 No Win32, `#![forbid(unsafe_code)]`, written test-first.
 
-- `key`: `Key`, `KeyEvent { key, kind, time_ms, injected }`, modifiers.
+- `key`: `Key` (a virtual-key code, with the keys capsflip names and
+  whether each is an extended key), `KeyEvent { key, kind, mods, injected }`,
+  `Modifiers`.
 - `rules`: the rule table, `Trigger -> Action`. Triggers are `Tap(key)`,
-  `Hold(key)` and `Chord(mods, key)`. v0.1 ships three rules:
-  `Tap(Caps) -> ToggleLayout`, `Hold(Caps) -> ToggleCapsLock`,
-  `Chord(Shift, Caps) -> ToggleCapsLock`. Later features add rows.
-- `engine`: the state machine. `on_key(event)` returns whether to swallow the
-  event and which actions to run; `on_timer(now)` fires holds. Injected events
-  always pass through.
+  `Hold(key)` and `Chord(mods, key)`. Actions are `ToggleLayout`,
+  `ToggleCapsLock`, `Clipboard(Copy | Paste | Cut)` and `Send(combo)`.
+  `Rules::keyboard` always has the Caps Lock rows (`Tap(Caps) ->
+  ToggleLayout`, `Hold(Caps) -> ToggleCapsLock`, `Chord(Shift, Caps) ->
+  ToggleCapsLock`) and, with `win_shortcuts`, `Chord(Win, C/V/X) ->
+  Clipboard(..)` and `Chord(Win+Shift, V) -> Send(Win+V)`. `Clip::combo`
+  turns a clipboard operation into Ctrl+C/V/X, or Ctrl+Insert /
+  Shift+Insert in a terminal.
+- `engine`: the state machine. `on_key(event, bypassed)` decides whether to
+  swallow the event and which action to run; `on_hold_timer` fires holds.
+  It tracks every key with a rule that is down, so chords can roll into one
+  another, and asks `bypassed` only for events it would swallow. Injected
+  events always pass through.
+- `strokes`: `sequence(combo, held)`, the key events to inject so that the
+  system sees exactly `combo` while the user holds `held`, with the mask
+  around the release of Win.
 - `layout`: `LayoutId`, `LangId`, `LayoutTracker`. `observe(layout)` records
   what is active; `toggle(current, installed)` picks what to activate. All
   layout semantics live here.
 - `config`: TOML parsed once into a validated `Config`, then resolved into
   `Settings` once the system has turned locale names into languages. Also
   reads the config file and writes the template when there is none.
-- `exclusions`: matches an executable name against the excluded list.
+- `apps`: a list of executables, matched without regard to case; the
+  excluded applications and the terminals.
 - `controller`: owns the engine, the tracker and the settings, and reaches
   the system only through the `Platform` trait. It decides inside the hook
   (`on_key`), acts after the hook has returned (`run_pending`), handles the
   hold timer and learns the foreground layout from polling (`on_poll`).
+  Every injection goes through `strokes::sequence` with the modifiers the
+  platform reports as down at that moment.
 - `logfile`: appends a line to the log file and moves a large one aside.
 - `tray`: the menu commands and check marks, the icon and tooltip for each
   state, the text of the notifications.
@@ -130,8 +154,10 @@ decisions of its own.
   the `TaskbarCreated` broadcast (Explorer restarted, add the icon again)
   and can bring the tray menu to the front.
 - `platform`: `Platform` for Win32: read the layout of the focused window,
-  list layouts, post `WM_INPUTLANGCHANGEREQUEST`, inject Caps Lock, name the
-  foreground executable.
+  list layouts, post `WM_INPUTLANGCHANGEREQUEST`, tell whether a key is
+  down, inject strokes with one `SendInput` call, and name the foreground
+  executable after the process that owns its IME window (so a legacy
+  console is `conhost.exe`).
 - `tray`: `Shell_NotifyIconW`, the icon from the core's pixels, the popup
   menu.
 - `registry`: reads and writes the `Run` value.
@@ -141,6 +167,9 @@ decisions of its own.
 
 A release build has no console (`windows_subsystem = "windows"`); a debug
 build keeps one, so `cargo run` shows the log as it is written.
+
+The diagnostics in `examples/`:
+
 - `examples/probe.rs`: a diagnostic that prints hook events, the current
   layout and the foreground window class. Used to verify Win32 behaviour.
 - `examples/console.rs`: reads the layout of every legacy console window two
@@ -202,6 +231,10 @@ hold_threshold_ms = 500
 
 [exclusions]
 apps = ["mstsc.exe", "vmware.exe"]
+
+[clipboard]
+win_shortcuts = true
+terminals = ["WindowsTerminal.exe", "conhost.exe"]
 ```
 
 The template written on first start has every setting commented out, so the

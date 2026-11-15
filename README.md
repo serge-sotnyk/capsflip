@@ -2,19 +2,18 @@
 
 Mac keyboard habits for Windows, written in Rust.
 
-Version 0.1 does one thing: Caps Lock switches the keyboard layout, as on a
-Mac.
+- **Caps Lock switches the keyboard layout**, as on a Mac. A short press
+  switches between English and the last non-English layout you used,
+  whether you reached it with capsflip, Ctrl+Shift, Win+Space or the mouse.
+  Holding Caps Lock for half a second turns capitals on or off, as does
+  Shift+Caps Lock. Phantom layouts that Windows adds on its own, such as
+  English (United Kingdom), are never switched to.
+- **Win+C, Win+V and Win+X copy, paste and cut**, as Cmd+C/V/X on a Mac.
+  Off until you switch it on in the config, because it replaces what
+  Windows does with these keys.
 
-- A short press switches between English and the last non-English layout
-  you used, whether you reached it with capsflip, Ctrl+Shift, Win+Space or
-  the mouse.
-- Holding Caps Lock for half a second turns capitals on or off, as does
-  Shift+Caps Lock.
-- Phantom layouts that Windows adds on its own, such as English (United
-  Kingdom), are never switched to.
-
-Copy, paste and cut on Win+C, Win+V and Win+X are planned for 0.2. Other
-ideas wait in the [issues](https://github.com/serge-sotnyk/capsflip/issues).
+Other ideas wait in the
+[issues](https://github.com/serge-sotnyk/capsflip/issues).
 
 ## Install
 
@@ -40,6 +39,18 @@ login*, quit it, and delete the executable, `%APPDATA%\capsflip` and
 | Caps Lock, held for half a second | turns capitals on or off |
 | Shift+Caps Lock | turns capitals on or off |
 
+With `win_shortcuts = true` in the config:
+
+| Press | Does | In a terminal |
+|---|---|---|
+| Win+C | copies (Ctrl+C) | copies (Ctrl+Insert), never interrupts a program |
+| Win+V | pastes (Ctrl+V) | pastes (Shift+Insert) |
+| Win+X | cuts (Ctrl+X) | nothing |
+| Win+Shift+V | opens the clipboard history, which Win+V used to open | the same |
+
+Copilot no longer opens on Win+C. The quick link menu that Win+X used to
+open is still there with a right click on Start.
+
 The tray menu has *Pause*, *Start at login*, *Open config*, *Reload config*
 and *Quit*. While paused the icon is grey and Caps Lock is plain Caps Lock.
 
@@ -61,9 +72,18 @@ default_secondary = "uk-UA"
 hold_threshold_ms = 500
 
 [exclusions]
-# Programs in which Caps Lock is left alone.
+# Programs in which capsflip leaves every key alone.
 apps = ["mstsc.exe", "vmware.exe"]
+
+[clipboard]
+# Win+C, Win+V and Win+X copy, paste and cut.
+win_shortcuts = true
+# Terminals: copy and paste go as Ctrl+Insert and Shift+Insert there.
+terminals = ["WindowsTerminal.exe", "conhost.exe"]
 ```
+
+Programs are named by their executable file. A legacy console window is
+`conhost.exe`, whatever runs in it.
 
 A config with a mistake is never applied: on reload the previous settings
 stay, at start the defaults are used, and a notification says what is
@@ -73,8 +93,12 @@ wrong. The log is `%LOCALAPPDATA%\capsflip\capsflip.log`.
 
 - Windows 11 only. The ARM64 build has not been tried on ARM hardware.
 - Windows run as administrator are out of reach: there Caps Lock is plain
-  Caps Lock. capsflip runs unelevated on purpose.
-- capsflip watches the keyboard with a low-level hook and injects Caps Lock
+  Caps Lock and Win+C/V/X do what Windows does. capsflip runs unelevated on
+  purpose.
+- The terminal inside VS Code cannot be told apart from the editor, so
+  Win+C there sends Ctrl+C: it copies a selection, and without one it
+  interrupts the running program.
+- capsflip watches the keyboard with a low-level hook and injects key
   presses. Anti-cheat software in games and some antivirus products may
   object to that; pause capsflip or add the game to `exclusions`.
 
