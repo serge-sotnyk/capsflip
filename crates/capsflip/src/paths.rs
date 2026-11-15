@@ -8,8 +8,19 @@ pub fn config() -> Option<PathBuf> {
 }
 
 /// `%LOCALAPPDATA%\capsflip\capsflip.log`: the log stays on this machine.
+#[cfg(not(test))]
 pub fn log() -> Option<PathBuf> {
     in_profile("LOCALAPPDATA", "capsflip.log")
+}
+
+/// Tests log to the temporary directory, never to the user's log.
+#[cfg(test)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the signature of the function it stands in for"
+)]
+pub fn log() -> Option<PathBuf> {
+    Some(std::env::temp_dir().join("capsflip-tests.log"))
 }
 
 fn in_profile(variable: &str, file: &str) -> Option<PathBuf> {
@@ -29,10 +40,15 @@ mod tests {
     }
 
     #[test]
-    fn the_log_lives_in_the_local_profile() {
-        let path = log().expect("LOCALAPPDATA is set on Windows");
+    fn a_profile_path_is_the_capsflip_folder_in_the_variable() {
+        let path = in_profile("LOCALAPPDATA", "capsflip.log").expect("set on Windows");
         let local = std::env::var_os("LOCALAPPDATA").unwrap();
         assert_eq!(path, PathBuf::from(local).join("capsflip/capsflip.log"));
+    }
+
+    #[test]
+    fn tests_never_write_the_users_log() {
+        assert!(log().unwrap().starts_with(std::env::temp_dir()));
     }
 
     #[test]

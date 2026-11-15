@@ -15,6 +15,16 @@ pub fn log(line: &str) {
     }
 }
 
+/// The size at which the log is moved aside on start.
+const LIMIT: u64 = 1024 * 1024;
+
+/// Moves a log that has grown past [`LIMIT`] aside, once at start.
+pub fn rotate() {
+    if let Some(path) = paths::log() {
+        let _ = logfile::rotate(&path, LIMIT);
+    }
+}
+
 fn timestamp() -> String {
     let t = unsafe { GetLocalTime() };
     format!(

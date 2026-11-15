@@ -23,9 +23,13 @@ changes; do not let it drift from the code.
 | Value right after start | `default_secondary` from config, otherwise the first non-English layout installed |
 | Phantom en-GB | Bypassed only: capsflip always activates one specific layout, and treats any English layout as "English" when reading the current one. It never removes layouts |
 | Configured English missing | Warn, then fall back to any installed English layout |
-| Settings | `%APPDATA%\capsflip\config.toml` is the single source of truth. Tray menu: pause, start at login, open config, reload config, quit |
-| Indication | Static tray icon with two states: active and paused |
-| Staying out of the way | Pause from the tray menu, plus a list of excluded executables in config |
+| Settings | `%APPDATA%\capsflip\config.toml` is the single source of truth. Tray menu: pause, start at login, open config, reload config, quit. A left click, a right click and Enter on the icon all open the menu |
+| Rejected config | At start, capsflip runs with the built-in defaults and a notification says why; on reload, it keeps the settings in effect and says why. A typo never leaves the keyboard without capsflip |
+| Open config | In the program registered for `.toml`, or Notepad when there is none |
+| Indication | Static tray icon with two states: active (blue) and paused (grey). Drawn in code from ASCII art, so it is sharp at every display scale |
+| Staying out of the way | Pause from the tray menu, plus a list of excluded executables in config. Pause is not remembered: capsflip always starts active |
+| Second instance | Shows a message that capsflip is already running and exits |
+| Log | `%LOCALAPPDATA%\capsflip\capsflip.log`, moved to `capsflip.old.log` at start once it passes 1 MiB |
 | Elevated windows | Not supported. capsflip runs unelevated, so the hook does not see keys there and Caps Lock behaves natively |
 | Console windows | Supported, including the legacy console host |
 | Install | Portable exe. Autostart through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. A named mutex prevents a second instance |
@@ -84,7 +88,12 @@ No Win32, `#![forbid(unsafe_code)]`, written test-first.
   the system only through the `Platform` trait. It decides inside the hook
   (`on_key`), acts after the hook has returned (`run_pending`), handles the
   hold timer and learns the foreground layout from polling (`on_poll`).
-- `logfile`: appends a line to the log file.
+- `logfile`: appends a line to the log file and moves a large one aside.
+- `tray`: the menu commands and check marks, the icon and tooltip for each
+  state, the text of the notifications.
+- `icon`: the pixels of the tray icon at any size.
+- `autostart`: the `Run` value for this executable and whether the one in
+  the registry is it.
 
 ### `crates/capsflip`
 
@@ -92,19 +101,34 @@ The Windows binary. It implements `Platform` with Win32 calls and forwards
 the hook, the timers and the wake message to the controller. It contains no
 decisions of its own.
 
-- `main`: the app in a thread local, the keyboard hook, the message window,
-  the hold and poll timers, start-up.
+- `main`: the app in a thread local, the keyboard hook, a hidden top-level
+  window, the hold and poll timers, the menu commands, start-up. The window
+  is top-level rather than message-only because only top-level windows get
+  the `TaskbarCreated` broadcast (Explorer restarted, add the icon again)
+  and can bring the tray menu to the front.
 - `platform`: `Platform` for Win32: read the layout of the focused window,
   list layouts, post `WM_INPUTLANGCHANGEREQUEST`, inject Caps Lock, name the
   foreground executable.
+- `tray`: `Shell_NotifyIconW`, the icon from the core's pixels, the popup
+  menu.
+- `registry`: reads and writes the `Run` value.
+- `instance`: the named mutex that keeps one capsflip per session.
 - `locale`: locale name to language identifier.
 - `paths`, `logging`: where the config and the log live; timestamped lines.
+
+A release build has no console (`windows_subsystem = "windows"`); a debug
+build keeps one, so `cargo run` shows the log as it is written.
 - `examples/probe.rs`: a diagnostic that prints hook events, the current
   layout and the foreground window class. Used to verify Win32 behaviour.
 
 Its tests run against the real system instead of a mocked Win32: they start
-and stop the app with a real hook, resolve real locales and name the test
-process. What needs a person at the keyboard is in `docs/manual-test.md`.
+and stop the app with a real hook, send messages to its real window, carry
+out menu commands, build a real menu and icon, claim a real mutex, resolve
+real locales and name the test process. They keep out of the user's way:
+the `Run` value goes under a scratch registry key, the log goes to the
+temporary directory, and the tray icon is shown only for an instant, never
+with a notification. What needs a person at the keyboard is in
+`docs/manual-test.md`.
 
 ## Win32 facts
 
