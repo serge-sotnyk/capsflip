@@ -1,6 +1,7 @@
 //! The configuration file: parsed and validated once, trusted afterwards.
 
 use std::fmt;
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -48,6 +49,25 @@ apps = []
         toml::from_str(text).map_err(|error| ConfigError(error.to_string()))
     }
 
+    /// Reads the settings from the config file at `path`, writing the
+    /// commented template there first when the file does not exist yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message that starts with the path when the file cannot be
+    /// read or written, or is rejected by [`Self::parse`] or
+    /// [`Self::resolve`].
+    pub fn load(
+        path: &Path,
+        lang_of: impl Fn(&str) -> Option<LangId>,
+    ) -> Result<Settings, ConfigError> {
+        read_or_create(path)
+            .map_err(|error| ConfigError(error.to_string()))
+            .and_then(|text| Self::parse(&text))
+            .and_then(|config| config.resolve(lang_of))
+            .map_err(|ConfigError(reason)| ConfigError(format!("{}: {reason}", path.display())))
+    }
+
     /// Turns the locale tags into languages, using the system's `lang_of`.
     ///
     /// # Errors
@@ -88,6 +108,16 @@ apps = []
             exclusions: self.exclusions,
         })
     }
+}
+
+fn read_or_create(path: &Path) -> std::io::Result<String> {
+    if !path.exists() {
+        if let Some(directory) = path.parent() {
+            std::fs::create_dir_all(directory)?;
+        }
+        std::fs::write(path, Config::TEMPLATE)?;
+    }
+    std::fs::read_to_string(path)
 }
 
 /// A config whose locale tags the system has resolved to languages.
@@ -212,6 +242,71 @@ mod tests {
             "uk-UA" => Some(LangId::new(0x0422)),
             _ => None,
         }
+    }
+
+    /// A fresh, empty directory for one test.
+    fn scratch(test: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("capsflip-{}-{test}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn loading_a_missing_file_writes_the_template_and_gives_the_defaults() {
+        let path = scratch("missing").join("capsflip").join("config.toml");
+        let settings = Config::load(&path, known).unwrap();
+        assert_eq!(settings, Config::default().resolve(known).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), Config::TEMPLATE);
+    }
+
+    #[test]
+    fn loading_an_existing_file_reads_it_and_leaves_it_alone() {
+        let path = scratch("existing").join("config.toml");
+        let text = "[layout]
+default_secondary = \"uk-UA\"
+";
+        std::fs::write(&path, text).unwrap();
+        let settings = Config::load(&path, known).unwrap();
+        assert_eq!(
+            settings.layouts.default_secondary,
+            Some(LangId::new(0x0422))
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn every_load_error_names_the_file() {
+        let dir = scratch("errors");
+        let name = |file: &str| dir.join(file).display().to_string();
+
+        std::fs::write(
+            dir.join("syntax.toml"),
+            "[layout
+",
+        )
+        .unwrap();
+        let error = Config::load(&dir.join("syntax.toml"), known)
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with(&name("syntax.toml")), "{error}");
+        assert!(error.contains("line 1"), "{error}");
+
+        std::fs::write(
+            dir.join("locale.toml"),
+            "[layout]
+english = \"xx-XX\"
+",
+        )
+        .unwrap();
+        let error = Config::load(&dir.join("locale.toml"), known)
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with(&name("locale.toml")), "{error}");
+        assert!(error.contains("xx-XX"), "{error}");
+
+        let error = Config::load(&dir, known).unwrap_err().to_string();
+        assert!(error.starts_with(&dir.display().to_string()), "{error}");
     }
 
     fn resolve_error_of(text: &str) -> String {

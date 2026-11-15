@@ -11,4 +11,5 @@ pub mod engine;
 pub mod exclusions;
 pub mod key;
 pub mod layout;
+pub mod logfile;
 pub mod rules;
