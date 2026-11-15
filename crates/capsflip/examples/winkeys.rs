@@ -1,9 +1,13 @@
 //! Spike for Win+C / Win+V / Win+X as copy / paste / cut (#25).
 //!
 //! `cargo run -p capsflip --example winkeys` swallows Win+C, Win+V and Win+X
-//! and sends copy, paste and cut instead; Win+Shift+V and Win+Shift+X send
-//! the original Win+V and Win+X. In Windows Terminal and the legacy console,
+//! and sends copy, paste and cut instead; Win+Shift+V sends the original
+//! Win+V, the clipboard history. In Windows Terminal and the legacy console,
 //! copy and paste go as Ctrl+Insert and Shift+Insert, and cut does nothing.
+//!
+//! Win+Shift+X is left alone: the quick link menu opened from injected keys
+//! does not get the keyboard focus and then does not close on Esc or a
+//! click elsewhere, even after `AllowSetForegroundWindow(ASFW_ANY)`.
 //!
 //! While Win is held, a combination is sent as: the mask, Win up, the
 //! combination, Win down, the mask. The mask is a key that does nothing
@@ -119,7 +123,7 @@ fn decide(vk: u32) -> Option<Job> {
         (VK_C, false) => Some(Job::Copy),
         (VK_V, false) => Some(Job::Paste),
         (VK_X, false) => Some(Job::Cut),
-        (VK_V | VK_X, true) => Some(Job::Native(vk as u16)),
+        (VK_V, true) => Some(Job::Native(VK_V)),
         _ => None,
     }
 }

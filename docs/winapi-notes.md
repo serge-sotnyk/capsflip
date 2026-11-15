@@ -94,6 +94,33 @@ focused window, falling back to the window's own thread. For other windows
 it is the same thread, so there is no special case for consoles, and the
 per-window memory planned for them is not needed.
 
+## Win+C / V / X spike, 2026-11-15
+
+Run with `cargo run -p capsflip --example winkeys` (#25). While Win is
+held, the spike swallows the letter and injects, in one `SendInput` call:
+the mask (`vkE8`), Win up, the combination, Win down, the mask.
+
+- **The hook is first.** Win+C, Win+V and Win+X never opened Copilot, the
+  clipboard history or the quick link menu.
+- **No race with the release of Win.** In all 21 combinations the
+  injection ran 0 ms after the key (the hook time against `GetTickCount`),
+  with Win still held. The rule that the hook only decides and posts holds.
+- **Windows tried**, all working: Chrome (copy, paste), Notepad++ (cut,
+  paste), Explorer to Total Commander (a file copied and pasted), the
+  legacy console (copy and paste as Ctrl+Insert / Shift+Insert).
+- **Win+Shift+V** sends Shift up, V down, V up, Shift down while Win stays
+  held: the clipboard history opens and closes as usual.
+- **Win+Shift+X** opened the quick link menu the same way, but the menu
+  did not get the keyboard focus: 300 ms later the foreground window was
+  still Chrome, and the menu did not close on Esc or a click elsewhere
+  (once it did). `AllowSetForegroundWindow(ASFW_ANY)` before the injection
+  returned "Access is denied" once and success after that, and changed
+  nothing. The quick link menu is therefore left without a shortcut.
+
+Still open: Windows Terminal, Win+C without a selection while a program
+runs, Win+D / Win+E right after Win+C with Win still held, and whether
+Start ever opens on the release of Win.
+
 ## Running the probe
 
 The probe answered the questions below in the first session. It stays as a

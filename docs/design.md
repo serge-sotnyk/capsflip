@@ -47,7 +47,8 @@ Win+C / Win+V / Win+X as copy / paste / cut (#13). Decided by the owner on
 | Keys sent | Ctrl+C / Ctrl+V / Ctrl+X |
 | Terminals | In applications on the `terminals` list in config, copy and paste go as Ctrl+Insert / Shift+Insert, so Win+C never interrupts a program. Cut does nothing there, as Cmd+X in the Mac Terminal: Ctrl+X is "exit" in nano and a prefix in bash (capsflip's default) |
 | Default terminal list | `WindowsTerminal.exe` and `conhost.exe`. A legacy console is named after `conhost.exe` whatever runs in it. The terminal inside VS Code cannot be told apart from the editor and gets Ctrl+C (capsflip's default) |
-| Clipboard history, quick link menu | Move to Win+Shift+V and Win+Shift+X: capsflip sends the system the original Win+V / Win+X |
+| Clipboard history | Moves to Win+Shift+V: capsflip sends the system the original Win+V |
+| Quick link menu | No shortcut; it opens with a right click on Start. The owner chose Win+Shift+X, but a menu opened from injected keys does not get the keyboard focus and then does not close on Esc or a click elsewhere, even after `AllowSetForegroundWindow`; the owner agreed to drop it if it could not be fixed simply. Win+Shift+X is left alone |
 | Holding the keys | One press, one action; holding Win+V does not repeat the paste |
 | Pause, exclusions, elevated windows | As for Caps Lock: paused or in an excluded application the keys behave natively; elevated windows are out of reach |
 | Win+Shift+C, other Mac shortcuts | Untouched; other shortcuts wait in #16 |
