@@ -117,9 +117,19 @@ the mask (`vkE8`), Win up, the combination, Win down, the mask.
   returned "Access is denied" once and success after that, and changed
   nothing. The quick link menu is therefore left without a shortcut.
 
-Still open: Windows Terminal, Win+C without a selection while a program
-runs, Win+D / Win+E right after Win+C with Win still held, and whether
-Start ever opens on the release of Win.
+- **Terminals.** In Windows Terminal and the legacy console, copy and paste
+  went as Ctrl+Insert and Shift+Insert, with the extended-key flag on
+  Insert and Win, and worked; Win+C without a selection did not interrupt a
+  running `ping -t`.
+- **Win stays usable.** Win+D and Win+E right after Win+C, with Win still
+  held, worked; Start never opened on the release of Win, and a lone Win
+  still opens it. The trailing mask stays: without a test of
+  `no-trailing-mask` there is no reason to drop it.
+
+Decision: inject, in one `SendInput` call, the mask, the release of every
+held modifier the combination does not use, the modifiers it needs, the
+key, and all of it back in reverse order, with the mask again after Win
+is pressed again. Insert and Win carry the extended-key flag.
 
 ## Running the probe
 
