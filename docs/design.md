@@ -17,7 +17,7 @@ changes; do not let it drift from the code.
 | Topic | Decision |
 |---|---|
 | Short Caps Lock press | Toggles between the configured English layout and the last used non-English layout |
-| Real Caps Lock | Both a long press (threshold in config, default 400 ms) and Shift+Caps Lock toggle it |
+| Real Caps Lock | Both a long press (threshold in config, default 1000 ms) and Shift+Caps Lock toggle it |
 | Long press timing | Fires when the threshold elapses while the key is still held, not on release |
 | Last non-English layout | Tracked in the background, including manual switches (Ctrl+Shift, mouse, Win+Space). One global value, not per window |
 | Value right after start | `default_secondary` from config, otherwise the first non-English layout installed |
@@ -124,7 +124,7 @@ english = "en-US"
 default_secondary = "uk-UA"   # optional
 
 [caps_lock]
-hold_threshold_ms = 400
+hold_threshold_ms = 1000
 
 [exclusions]
 apps = ["mstsc.exe", "vmware.exe"]

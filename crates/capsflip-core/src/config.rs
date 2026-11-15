@@ -29,7 +29,7 @@ english = "en-US"
 [caps_lock]
 # How long Caps Lock must be held to toggle capital letters, in milliseconds.
 # Shift+Caps Lock toggles them at once.
-hold_threshold_ms = 400
+hold_threshold_ms = 1000
 
 [exclusions]
 # Programs in which Caps Lock is left alone, by executable name,
@@ -87,7 +87,7 @@ impl HoldThreshold {
 
 impl Default for HoldThreshold {
     fn default() -> Self {
-        Self(400)
+        Self(1000)
     }
 }
 
@@ -160,7 +160,7 @@ mod tests {
         let config = Config::parse("").unwrap();
         assert_eq!(config.layout.english.as_str(), "en-US");
         assert_eq!(config.layout.default_secondary, None);
-        assert_eq!(config.caps_lock.hold_threshold.as_millis(), 400);
+        assert_eq!(config.caps_lock.hold_threshold.as_millis(), 1000);
         assert!(!config.exclusions.contains("mstsc.exe"));
         assert_eq!(config, Config::default());
     }
