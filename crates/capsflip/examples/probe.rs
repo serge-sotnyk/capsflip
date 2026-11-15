@@ -18,12 +18,14 @@
     clippy::cast_sign_loss
 )]
 
+#[path = "shared/journal.rs"]
+mod journal;
+
 use std::fmt::Write as _;
-use std::io::Write as _;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
-use std::time::Instant;
 
+use journal::log;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Globalization::LCIDToLocaleName;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -53,41 +55,12 @@ const HSHELL_LANGUAGE: usize = 8;
 const LANG_EN_US: usize = 0x0409;
 const PRIMARY_LANG_ENGLISH: usize = 0x09;
 
-static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static START: Mutex<Option<Instant>> = Mutex::new(None);
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 static SHELL_MSG: AtomicU32 = AtomicU32::new(0);
 static CAPS_DOWN: AtomicBool = AtomicBool::new(false);
 static SHIFT_AT_DOWN: AtomicBool = AtomicBool::new(false);
 static POST_TO_FOCUS: AtomicBool = AtomicBool::new(false);
 static LAST_POLL: Mutex<(isize, isize, isize)> = Mutex::new((0, 0, 0));
-
-/// Queues a line. Nothing is written here, so the hook callback stays fast
-/// even when the console is blocked by a text selection.
-fn log(tag: &str, text: &str) {
-    let elapsed = START.lock().unwrap().map_or(0, |s| s.elapsed().as_millis());
-    LOG.lock()
-        .unwrap()
-        .push(format!("{elapsed:>8} {tag:<8} {text}"));
-}
-
-fn flush() {
-    let lines: Vec<String> = std::mem::take(&mut *LOG.lock().unwrap());
-    if lines.is_empty() {
-        return;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("target/probe.log")
-        .ok();
-    for line in lines {
-        println!("{line}");
-        if let Some(file) = file.as_mut() {
-            let _ = writeln!(file, "{line}");
-        }
-    }
-}
 
 fn lang_of(hkl: HKL) -> usize {
     hkl.0 as usize & 0xFFFF
@@ -334,7 +307,7 @@ unsafe extern "system" fn window_proc(
         WM_REAL_CAPS => on_real_caps(),
         WM_TIMER => {
             on_poll();
-            flush();
+            journal::flush("target/probe.log");
         }
         m if m != 0 && m == SHELL_MSG.load(Ordering::Relaxed) => {
             if wparam.0 == HSHELL_LANGUAGE {
@@ -354,9 +327,8 @@ unsafe extern "system" fn window_proc(
 }
 
 fn main() -> windows::core::Result<()> {
-    *START.lock().unwrap() = Some(Instant::now());
+    journal::start();
     POST_TO_FOCUS.store(std::env::args().any(|a| a == "focus"), Ordering::Relaxed);
-    let _ = std::fs::create_dir_all("target");
 
     log(
         "start",

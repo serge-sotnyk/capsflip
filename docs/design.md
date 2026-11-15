@@ -1,8 +1,8 @@
 # capsflip design
 
 capsflip brings Mac keyboard habits to Windows. This document records the
-decisions behind v0.1 and the facts they rest on. Update it when a decision
-changes; do not let it drift from the code.
+decisions behind each version and the facts they rest on. Update it when a
+decision changes; do not let it drift from the code.
 
 ## Scope
 
@@ -35,6 +35,28 @@ changes; do not let it drift from the code.
 | Install | Portable exe. Autostart through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. A named mutex prevents a second instance |
 | Platforms | Windows 11, x64 and ARM64. ARM64 is built but not tested on hardware |
 | Releases | GitHub Actions: checks on push, binaries attached to a GitHub Release on a `v*` tag. No code signing |
+
+## Decisions for v0.2
+
+Win+C / Win+V / Win+X as copy / paste / cut (#13). Decided by the owner on
+2026-11-15 (#14, #15), except where marked as capsflip's default.
+
+| Topic | Decision |
+|---|---|
+| Switching it on | Off by default; `[clipboard] win_shortcuts = true` in config, then Reload config. No tray item: the config stays the single source of truth (capsflip's default) |
+| Keys sent | Ctrl+C / Ctrl+V / Ctrl+X |
+| Terminals | In applications on the `terminals` list in config, copy and paste go as Ctrl+Insert / Shift+Insert, so Win+C never interrupts a program. Cut does nothing there, as Cmd+X in the Mac Terminal: Ctrl+X is "exit" in nano and a prefix in bash (capsflip's default) |
+| Default terminal list | `WindowsTerminal.exe` and `conhost.exe`. A legacy console is named after `conhost.exe` whatever runs in it. The terminal inside VS Code cannot be told apart from the editor and gets Ctrl+C (capsflip's default) |
+| Clipboard history, quick link menu | Move to Win+Shift+V and Win+Shift+X: capsflip sends the system the original Win+V / Win+X |
+| Holding the keys | One press, one action; holding Win+V does not repeat the paste |
+| Pause, exclusions, elevated windows | As for Caps Lock: paused or in an excluded application the keys behave natively; elevated windows are out of reach |
+| Win+Shift+C, other Mac shortcuts | Untouched; other shortcuts wait in #16 |
+
+How the keys are sent is settled by a spike at the keyboard (#25) and
+recorded in `docs/winapi-notes.md`. The hypothesis: while Win is still held,
+inject a key that does nothing (the mask), release Win, send the combination,
+press Win again, and inject the mask once more, so that neither the injected
+release nor the physical one opens Start.
 
 ## Glossary
 
@@ -122,6 +144,10 @@ build keeps one, so `cargo run` shows the log as it is written.
   layout and the foreground window class. Used to verify Win32 behaviour.
 - `examples/console.rs`: reads the layout of every legacy console window two
   ways and can ask them to switch, with no key pressed.
+- `examples/winkeys.rs`: the spike for Win+C / V / X (#25): swallows the
+  combinations, injects copy, paste and cut with the menu mask, and logs
+  every event and how late the injection ran.
+- `examples/shared/journal.rs`: the queued log both diagnostics write.
 
 Its tests run against the real system instead of a mocked Win32: they start
 and stop the app with a real hook, send messages to its real window, carry
