@@ -120,6 +120,8 @@ A release build has no console (`windows_subsystem = "windows"`); a debug
 build keeps one, so `cargo run` shows the log as it is written.
 - `examples/probe.rs`: a diagnostic that prints hook events, the current
   layout and the foreground window class. Used to verify Win32 behaviour.
+- `examples/console.rs`: reads the layout of every legacy console window two
+  ways and can ask them to switch, with no key pressed.
 
 Its tests run against the real system instead of a mocked Win32: they start
 and stop the app with a real hook, send messages to its real window, carry
@@ -139,9 +141,9 @@ Verified against documentation:
 - If the callback exceeds the hook timeout (at most 1000 ms), Windows removes
   the hook silently. The callback therefore only decides and posts a message;
   actions run after it returns.
-- `GetKeyboardLayout` is unreliable for a legacy console window, because the
-  thread reported for that window is not the thread that owns it. capsflip
-  remembers the layout it last activated per console window instead.
+- For a legacy console window, `GetWindowThreadProcessId` names the
+  console's client (for example `cmd.exe`), not the `conhost.exe` thread
+  that owns the window, so `GetKeyboardLayout` of that thread is useless.
 - A layout is found by language identifier in `GetKeyboardLayoutList`, never
   by a hard-coded `HKL`: layout variants (for example Ukrainian Enhanced,
   `00020422`) have `HKL` values that differ between machines.
@@ -151,10 +153,15 @@ Measured with the probe (details in `docs/winapi-notes.md`):
 - Windows does not announce manual layout switches: `HSHELL_LANGUAGE` never
   arrived. The shell therefore reads the foreground layout every 250 ms.
 - `WM_INPUTLANGCHANGEREQUEST` posted to the foreground window switches the
-  layout in classic Win32 and Electron apps.
-
-Still to verify: the legacy console host, Windows Terminal, browsers and UWP
-apps, in particular which window must receive the request in UWP.
+  layout everywhere capsflip was tried: classic Win32, Chrome and Electron,
+  Windows Terminal, the new Notepad, Settings (UWP), the Start menu search
+  and the legacy console.
+- In a legacy console the layout of the client's thread reads as zero. The
+  default IME window of the console belongs to the real `conhost.exe`
+  thread, and that thread's layout follows every switch. capsflip therefore
+  reads the layout of the thread that owns the IME window of the focused
+  window, for every window; for all others it is the window's own thread.
+  No per-window memory is needed.
 
 ## Configuration
 

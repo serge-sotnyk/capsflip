@@ -10,7 +10,8 @@ anything: it holds the decisions, the glossary and the architecture.
 - `crates/capsflip`: the Windows binary. It translates between Win32 and the
   core types and makes no decisions of its own.
 - `crates/capsflip/examples/probe.rs`: a diagnostic for checking Win32
-  behaviour on a real machine.
+  behaviour on a real machine. `examples/console.rs` does the same for the
+  layout of legacy console windows without a key press.
 - `docs/`: design, Win32 notes, the manual test checklist.
 - `scripts/check.ps1`: every quality gate in one command.
 

@@ -8,6 +8,7 @@ use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
+use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, GetKeyboardLayoutList, HKL, INPUT, INPUT_0, INPUT_KEYBOARD,
     KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_CAPITAL,
@@ -85,7 +86,7 @@ impl Platform for Win32 {
     }
 }
 
-/// The thread of the window that has the keyboard focus.
+/// The thread that takes the keyboard input of the foreground window.
 ///
 /// It is the focused child window when there is one: in UWP apps that child
 /// lives on another thread than the frame window in the foreground.
@@ -99,9 +100,20 @@ fn focus_thread() -> Option<u32> {
     };
     let _ = unsafe { GetGUIThreadInfo(thread, &raw mut info) };
     let focus = Some(info.hwndFocus).filter(|window| !window.is_invalid());
-    Some(focus.map_or(thread, |window| unsafe {
-        GetWindowThreadProcessId(window, None)
-    }))
+    Some(input_thread(focus.unwrap_or(foreground)))
+}
+
+/// The thread that owns the default IME window of `window`, or the thread
+/// of `window` itself when it has none.
+///
+/// For most windows both are the same thread. A legacy console window is
+/// the exception: Windows names the console's client, such as `cmd.exe`, as
+/// its owner, and the layout of that thread reads as zero. The IME window
+/// belongs to the real thread in `conhost.exe`, whose layout follows every
+/// switch (see `examples/console.rs`).
+fn input_thread(window: HWND) -> u32 {
+    let ime = Some(unsafe { ImmGetDefaultIMEWnd(window) }).filter(|ime| !ime.is_invalid());
+    unsafe { GetWindowThreadProcessId(ime.unwrap_or(window), None) }
 }
 
 /// The file name of the executable that owns `window`.
@@ -163,6 +175,13 @@ mod tests {
     #[test]
     fn a_process_that_cannot_be_opened_has_no_name() {
         assert_eq!(process_executable(0), None);
+    }
+
+    #[test]
+    fn a_window_takes_its_input_on_the_thread_that_made_it() {
+        let window = crate::create_window().expect("a window");
+        let this_thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+        assert_eq!(input_thread(window), this_thread);
     }
 
     #[test]
