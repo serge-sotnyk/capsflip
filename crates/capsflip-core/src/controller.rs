@@ -35,6 +35,7 @@ pub struct Controller {
     tracker: LayoutTracker,
     hold_threshold: HoldThreshold,
     exclusions: Exclusions,
+    paused: bool,
     pending: Vec<Decision>,
 }
 
@@ -46,8 +47,24 @@ impl Controller {
             tracker: LayoutTracker::new(settings.layouts),
             hold_threshold: settings.hold_threshold,
             exclusions: settings.exclusions,
+            paused: false,
             pending: Vec::new(),
         }
+    }
+
+    /// Applies settings read again from the config file. The layout learned
+    /// so far is kept: it reflects what the user actually types in.
+    pub fn reload(&mut self, settings: Settings) {
+        self.tracker.set_prefs(settings.layouts);
+        self.hold_threshold = settings.hold_threshold;
+        self.exclusions = settings.exclusions;
+    }
+
+    /// Pauses or resumes every rule and returns whether it is paused now.
+    /// Layouts chosen by hand are still remembered while paused.
+    pub fn toggle_pause(&mut self) -> bool {
+        self.paused = !self.paused;
+        self.paused
     }
 
     /// Handles a key event inside the keyboard hook and returns whether to
@@ -57,9 +74,9 @@ impl Controller {
     /// the shell must call once the hook has returned, because Windows
     /// removes a hook that is slow.
     pub fn on_key(&mut self, event: KeyEvent, platform: &impl Platform) -> bool {
-        let exclusions = &self.exclusions;
-        let excluded = || exclusions.contains(&platform.foreground_executable());
-        let decision = self.engine.on_key(event, excluded);
+        let (paused, exclusions) = (self.paused, &self.exclusions);
+        let bypassed = || paused || exclusions.contains(&platform.foreground_executable());
+        let decision = self.engine.on_key(event, bypassed);
         if decision.swallows() {
             self.pending.push(decision);
         }
@@ -178,13 +195,18 @@ mod tests {
     fn lang_of(tag: &str) -> Option<LangId> {
         match tag {
             "en-US" => Some(EN_US.lang()),
+            "en-GB" => Some(EN_GB.lang()),
             "uk-UA" => Some(UK.lang()),
             _ => None,
         }
     }
 
+    fn settings(config: &str) -> Settings {
+        Config::parse(config).unwrap().resolve(lang_of).unwrap()
+    }
+
     fn controller(config: &str) -> Controller {
-        Controller::new(Config::parse(config).unwrap().resolve(lang_of).unwrap())
+        Controller::new(settings(config))
     }
 
     fn caps(kind: KeyKind, mods: Modifiers) -> KeyEvent {
@@ -300,6 +322,65 @@ mod tests {
         c.run_pending(&mut desktop);
         assert_eq!(desktop.activated, []);
         assert_eq!(desktop.armed, []);
+    }
+
+    #[test]
+    fn while_paused_caps_lock_is_left_alone() {
+        let mut c = controller("");
+        let mut desktop = Desktop::typing_in(EN_US);
+        assert!(c.toggle_pause(), "now paused");
+        assert!(!c.on_key(caps(KeyKind::Down, Modifiers::NONE), &desktop));
+        assert!(!c.on_key(caps(KeyKind::Up, Modifiers::NONE), &desktop));
+        c.run_pending(&mut desktop);
+        assert_eq!(desktop.activated, []);
+        assert_eq!(desktop.armed, []);
+
+        assert!(!c.toggle_pause(), "running again");
+        tap(&mut c, &mut desktop);
+        assert_eq!(desktop.activated, [RU]);
+    }
+
+    #[test]
+    fn while_paused_manual_switches_are_still_noticed() {
+        let mut c = controller("");
+        let mut desktop = Desktop::typing_in(UK);
+        c.toggle_pause();
+        c.on_poll(&desktop);
+        c.toggle_pause();
+        desktop.layout = EN_US;
+        tap(&mut c, &mut desktop);
+        assert_eq!(desktop.activated, [UK]);
+    }
+
+    #[test]
+    fn reloading_applies_the_new_settings_and_keeps_the_learned_layout() {
+        let mut c = controller("");
+        let mut desktop = Desktop::typing_in(UK);
+        c.on_poll(&desktop);
+        c.reload(settings(
+            "[layout]\nenglish = \"en-GB\"\n[caps_lock]\nhold_threshold_ms = 700\n\
+             [exclusions]\napps = [\"mstsc.exe\"]\n",
+        ));
+
+        desktop.executable = "mstsc.exe";
+        assert!(!c.on_key(caps(KeyKind::Down, Modifiers::NONE), &desktop));
+        assert!(!c.on_key(caps(KeyKind::Up, Modifiers::NONE), &desktop));
+        desktop.executable = "notepad.exe";
+
+        tap(&mut c, &mut desktop);
+        tap(&mut c, &mut desktop);
+        assert_eq!(
+            desktop.activated,
+            [EN_GB, UK],
+            "Ukrainian was learned before"
+        );
+
+        c.on_key(caps(KeyKind::Down, Modifiers::NONE), &desktop);
+        c.run_pending(&mut desktop);
+        assert_eq!(
+            desktop.armed.last().map(|(_, after)| after.as_millis()),
+            Some(700)
+        );
     }
 
     #[test]

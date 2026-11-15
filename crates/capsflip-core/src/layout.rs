@@ -67,6 +67,11 @@ impl LayoutTracker {
         }
     }
 
+    /// Replaces the preferences and keeps the remembered layout.
+    pub const fn set_prefs(&mut self, prefs: LayoutPrefs) {
+        self.prefs = prefs;
+    }
+
     /// Records that `layout` is active now, whatever caused it.
     pub fn observe(&mut self, layout: LayoutId) {
         if !layout.lang().is_english() {
