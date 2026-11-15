@@ -21,7 +21,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov,cargo-mutants,cargo-crap,similarity-rs
+          tool: cargo-llvm-cov,cargo-mutants,cargo-crap,cargo-dupes
       - name: Quality gates
         shell: pwsh
         run: scripts/check.ps1

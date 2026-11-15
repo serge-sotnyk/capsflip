@@ -22,7 +22,7 @@ The skill names three tools that this project replaces with Rust equivalents:
 | ub-mode | Here | Gate |
 |---|---|---|
 | Crapper | `cargo llvm-cov` + `cargo crap` | every function at CRAP 10 or below |
-| Dryer | `similarity-rs` | no pair of functions in `src` at 0.8 or above |
+| Dryer | `cargo dupes` | no exact or near duplicates at 0.7 or above |
 | Mutator | `cargo mutants` (core crate only) | no surviving mutants |
 
 Run all of it with:
@@ -32,6 +32,13 @@ pwsh scripts/check.ps1
 ```
 
 Add `-Fast` to skip mutation testing while iterating. CI runs the same script.
+
+The duplication threshold is 0.7 rather than the 0.8 ub-mode names, because
+the scale differs from Dryer's: on a hand-made sample, a copy with renamed
+names, one changed constant and one added line scores 0.72 in `cargo dupes`,
+and unrelated functions do not show up even at 0.5. `similarity-rs` was tried
+first and rejected: it scores unrelated small functions between 0.70 and 0.87,
+so no threshold separates duplicates from noise.
 
 Rules that are specific to this project:
 
@@ -54,11 +61,12 @@ Rules that are specific to this project:
 One-time setup:
 
 ```
-cargo install --locked cargo-llvm-cov cargo-mutants cargo-crap similarity-rs
+cargo install --locked cargo-llvm-cov cargo-mutants cargo-crap cargo-dupes
 ```
 
-The toolchain, its components and the build targets are pinned in
-`rust-toolchain.toml`.
+The compiler version, its components and the build targets are pinned in
+`rust-toolchain.toml`, so local runs and CI see the same lints. Raise the
+version deliberately, in its own commit.
 
 Linking for ARM64 needs the MSVC ARM64 build tools. Without them, type check
 with `cargo check --target aarch64-pc-windows-msvc`, which is what

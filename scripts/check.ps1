@@ -22,8 +22,10 @@ Step 'lint' { cargo clippy --workspace --all-targets -- -D warnings }
 Step 'ARM64 type check' { cargo check --workspace --all-targets --target aarch64-pc-windows-msvc }
 Step 'tests with coverage' { cargo llvm-cov --workspace --lcov --output-path target/lcov.info }
 Step 'CRAP at most 10' { cargo crap --workspace --lcov target/lcov.info --threshold 10 --fail-above }
-Step 'duplication below 0.8' {
-    similarity-rs crates/capsflip-core/src crates/capsflip/src --threshold 0.8 --skip-test --fail-on-duplicates
+Step 'no duplicated functions' {
+    # 0.7 on cargo-dupes' scale: a copy with renamed names, a changed constant
+    # and one added line scores 0.72. See AGENTS.md.
+    cargo dupes check --threshold 0.7 --exclude-tests --max-exact 0 --max-near 0
 }
 if (-not $Fast) {
     Step 'mutation testing' { cargo mutants --no-shuffle }
