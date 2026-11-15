@@ -74,25 +74,37 @@ No Win32, `#![forbid(unsafe_code)]`, written test-first.
   event and which actions to run; `on_timer(now)` fires holds. Injected events
   always pass through.
 - `layout`: `LayoutId`, `LangId`, `LayoutTracker`. `observe(layout)` records
-  what is active; `toggle_target(current, installed)` picks what to activate.
-  All layout semantics live here.
-- `config`: TOML parsed once into a validated `Config`.
+  what is active; `toggle(current, installed)` picks what to activate. All
+  layout semantics live here.
+- `config`: TOML parsed once into a validated `Config`, then resolved into
+  `Settings` once the system has turned locale names into languages. Also
+  reads the config file and writes the template when there is none.
 - `exclusions`: matches an executable name against the excluded list.
+- `controller`: owns the engine, the tracker and the settings, and reaches
+  the system only through the `Platform` trait. It decides inside the hook
+  (`on_key`), acts after the hook has returned (`run_pending`), handles the
+  hold timer and learns the foreground layout from polling (`on_poll`).
+- `logfile`: appends a line to the log file.
 
 ### `crates/capsflip`
 
-The Windows binary. It translates Win32 events into core types, and core
-actions into Win32 calls. It contains no decisions of its own.
+The Windows binary. It implements `Platform` with Win32 calls and forwards
+the hook, the timers and the wake message to the controller. It contains no
+decisions of its own.
 
-- `hook`: installs `WH_KEYBOARD_LL`; the callback asks the engine and posts
-  the resulting actions to the message loop.
-- `layouts`: lists layouts, reads the current one, activates one, and feeds
-  observations to the tracker.
-- `input`: `SendInput` for the real Caps Lock toggle.
-- `foreground`: executable name and window class of the foreground window.
-- `tray`, `autostart`, `single_instance`, `logging`, `main`.
+- `main`: the app in a thread local, the keyboard hook, the message window,
+  the hold and poll timers, start-up.
+- `platform`: `Platform` for Win32: read the layout of the focused window,
+  list layouts, post `WM_INPUTLANGCHANGEREQUEST`, inject Caps Lock, name the
+  foreground executable.
+- `locale`: locale name to language identifier.
+- `paths`, `logging`: where the config and the log live; timestamped lines.
 - `examples/probe.rs`: a diagnostic that prints hook events, the current
   layout and the foreground window class. Used to verify Win32 behaviour.
+
+Its tests run against the real system instead of a mocked Win32: they start
+and stop the app with a real hook, resolve real locales and name the test
+process. What needs a person at the keyboard is in `docs/manual-test.md`.
 
 ## Win32 facts
 
@@ -110,11 +122,15 @@ Verified against documentation:
   by a hard-coded `HKL`: layout variants (for example Ukrainian Enhanced,
   `00020422`) have `HKL` values that differ between machines.
 
-Still to verify with the probe (results go to `docs/winapi-notes.md`):
+Measured with the probe (details in `docs/winapi-notes.md`):
 
-- which mechanism reports manual layout switches: `HSHELL_LANGUAGE`,
-  `EVENT_SYSTEM_FOREGROUND`, or a timer as a fallback;
-- which window must receive `WM_INPUTLANGCHANGEREQUEST` in UWP apps.
+- Windows does not announce manual layout switches: `HSHELL_LANGUAGE` never
+  arrived. The shell therefore reads the foreground layout every 250 ms.
+- `WM_INPUTLANGCHANGEREQUEST` posted to the foreground window switches the
+  layout in classic Win32 and Electron apps.
+
+Still to verify: the legacy console host, Windows Terminal, browsers and UWP
+apps, in particular which window must receive the request in UWP.
 
 ## Configuration
 

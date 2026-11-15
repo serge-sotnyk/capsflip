@@ -40,6 +40,10 @@ and unrelated functions do not show up even at 0.5. `similarity-rs` was tried
 first and rejected: it scores unrelated small functions between 0.70 and 0.87,
 so no threshold separates duplicates from noise.
 
+Units shorter than four lines are not compared. Such a unit is one statement,
+for example a closure that forwards to a method, and two of them look alike
+without there being anything to factor out.
+
 Rules that are specific to this project:
 
 - A decision belongs in `capsflip-core`, behind a test that fails first. If the

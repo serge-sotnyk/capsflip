@@ -24,8 +24,9 @@ Step 'tests with coverage' { cargo llvm-cov --workspace --lcov --output-path tar
 Step 'CRAP at most 10' { cargo crap --workspace --lcov target/lcov.info --threshold 10 --fail-above }
 Step 'no duplicated functions' {
     # 0.7 on cargo-dupes' scale: a copy with renamed names, a changed constant
-    # and one added line scores 0.72. See AGENTS.md.
-    cargo dupes check --threshold 0.7 --exclude-tests --max-exact 0 --max-near 0
+    # and one added line scores 0.72. Units under four lines hold a single
+    # statement, which cannot be factored out any further. See AGENTS.md.
+    cargo dupes check --threshold 0.7 --min-lines 4 --exclude-tests --max-exact 0 --max-near 0
 }
 if (-not $Fast) {
     Step 'mutation testing' { cargo mutants --no-shuffle }
